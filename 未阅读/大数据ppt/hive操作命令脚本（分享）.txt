@@ -1,0 +1,286 @@
+﻿
+1、创建内部表
+CREATE TABLE IF NOT EXISTS student_manager02(
+id INT COMMENT 'student id',
+name  STRING COMMENT 'student name',
+age INT COMMENT 'student age')
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE;
+
+2、通过复制另一张表的表结构来创建表（不复制数据，只复制表结构）
+create table if not exists student_copy LIKE djt12.student_manager;
+
+3、表重命名
+ALTER TABLE student_copy RENAME TO student01;
+
+4、把id字段的列名修改为uid，修改COMMENT	,修改字段排列顺序，把id字段放在name字段后。
+ALTER TABLE student01
+CHANGE COLUMN id uid INT
+COMMENT 'the unique id'
+AFTER name;
+
+5、把字段uid的数据类型由INT改为STRING 
+ALTER TABLE student01
+CHANGE COLUMN uid uid STRING 
+COMMENT 'the unique id'
+AFTER name;
+
+6、把字段uid改为id，数据类型还原会INT类型
+ALTER TABLE student01
+CHANGE COLUMN uid id INT 
+COMMENT 'the unique id'
+FIRST;
+AFTER name;
+
+7、再增加两个列
+ALTER TABLE student01 ADD COLUMNS(grade STRING,class STRING);
+
+8、删除或替换列
+ALTER TABLE student01 REPLACE COLUMNS(grade STRING,class STRING);
+
+9、删除表
+DROP TABLE IF EXISTS student01;
+
+10、创建外部表
+CREATE  EXTERNAL TABLE IF NOT EXISTS student_external01(
+id INT COMMENT 'student id',
+name  STRING COMMENT 'student name',
+age INT COMMENT 'student age')
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/hive/external01';       //路径为HDFS路径
+
+11、创建内部分区表
+create table student_partition_manager01(
+id INT COMMENT 'student id',
+name  STRING COMMENT 'student name',
+age INT COMMENT 'student age')
+PARTITIONED BY(province STRING,city STRING)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t';
+
+12、创建外部分区表
+create  external table student_partition_external(
+id INT COMMENT 'student id',
+name  STRING COMMENT 'student name',
+age INT COMMENT 'student age')
+PARTITIONED BY(province STRING,city STRING)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t';
+
+13、指定（添加）分区
+//为内部分区表指定分区
+ALTER TABLE student_partition_external ADD PARTITION (province='henan',city='zhengzhou');
+//查看分区
+show partitions student_partition_external;
+//为外部分区表指定分区
+ALTER TABLE student_partition_external ADD PARTITION (province='shanxi',city='xian')
+LOCATION '/user/hive/external01';
+
+14、加载数据到内部分区表
+LOAD DATA LOCAL INPATH '/home/hadoop/data/student.txt' INTO TABLE student_partition_manager PARTITION(province='henan',city='zhengzhou');
+
+//注意student.txt里的数据格式，注意有无分区字段的区别。student01.txt无分区字段。
+LOAD DATA LOCAL INPATH '/home/hadoop/data/student01.txt' INTO TABLE student_partition_manager PARTITION (province='henan',city='zhengzhou');
+
+15、为外部分区表添加分区
+ALTER TABLE student_partition_external ADD PARTITION(province='guangzhou',city='shenzhen') 
+LOCATION '/user/hive/external01';
+//这种加载数据的方式容易造成数据的改变，所以最好使用动态分区，或者数据已经分区好，直接加载对应分区目录下的数据
+LOCATION '/user/hive/external/partition/student/guangzhou/shenzhen';
+
+16、删除分区
+ALTER TABLE student_partition_external DROP PARTITION(province='guangzhou',city='shenzhen');
+
+17、启动动态分区功能（默认没有启动）
+set hive.exec.dynamic.partition = true;
+
+18、设置所有分区都是动态的
+set hive.exec.dynamic.partition.mode=nostrict;
+
+
+19、准备两个表：一个普通外部表student_external01，一个分区外部表student02
+而且要保证分区表结构student02和student_external01一致
+我们以student_external01表为例，但是少两个分区字段，所以我们再增加两个字段。
+ALTER TABLE student_external01 ADD COLUMNS(province STRING,city STRING);
+
+20、先往外部表student_external01中加载数据（实际上现在外部表student_external01中已经有数据了，因为创建该表时指定了location）
+LOAD DATA LOCAL INPATH '/home/hadoop/data/student.txt' INTO TABLE student_external01;
+
+21、利用动态分区向表中插入数据
+//先创建分区外部表student02
+create  external table student02(
+id INT COMMENT 'student id',
+name  STRING COMMENT 'student name',
+age INT COMMENT 'student age')
+PARTITIONED BY(province STRING,city STRING)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t';
+//利用动态分区向表中插入数据
+INSERT OVERWRITE TABLE student02 PARTITION(province,city) SELECT * FROM student_external01 ;
+然后数据就会动态分区，把对应的数据放到对应的分区下。
+INSERT OVERWRITE TABLE student_manager02  SELECT * FROM student_manager01 ;
+22、开启分桶功能
+set hive.enforce.bucketing=true;
+
+23、创建桶表
+CREATE TABLE IF NOT EXISTS bucket_table(
+id INT COMMENT 'student id',
+name  STRING COMMENT 'student name',
+age INT COMMENT 'student age')
+CLUSTERED BY(id) INTO 3 BUCKETS
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t';
+
+24、插入数据到桶表中
+INSERT OVERWRITE TABLE bucket_table SELECT id,name,age FROM student_external01;
+
+25、再创建几个表为实现一次查询多表插入做准备
+create table if not exists student01 like student_partition_external;
+create table if not exists student02 like student_partition_external;
+create table if not exists student03 like student_partition_external;
+
+26、实现一次查询多表插入
+FROM student_external01
+INSERT OVERWRITE TABLE student01 PARTITION(province='henan',city='zhengzhou')
+SELECT id,name,age WHERE age=22
+INSERT OVERWRITE TABLE student02 PARTITION(province='henan',city='zhengzhou')
+SELECT id,name,age WHERE age=24
+INSERT OVERWRITE TABLE student03 PARTITION(province='henan',city='zhengzhou')
+SELECT id,name,age WHERE age=23;
+
+27、通过CTAS加载数据
+CREATE TABLE ctas01 AS SELECT id,name,age FROM student_external01;
+CREATE TABLE ctas02 AS SELECT * FROM student_external01;
+
+28、设置表的LOCATION
+ALTER TABLE ctas01  SET LOCATION 'hdfs://cluster1/user/hive/warehouse/dajiangtai.db/ctas01';
+
+29、使用INSERT子句将数据导出到HDFS或本地
+INSERT OVERWRITE DIRECTORY '/user/hive/data/ctas01' SELECT * FROM ctas01;
+INSERT OVERWRITE LOCAL DIRECTORY '/home/hadoop/data_ctas' SELECT * FROM ctas01;
+
+30、再创建一个外部表，供查有子目录的数据文件准备
+CREATE  EXTERNAL TABLE IF NOT EXISTS student_external02(
+id INT COMMENT 'student id',
+name  STRING COMMENT 'student name',
+age INT COMMENT 'student age')
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/hive/data';
+
+实现递归读取要设置这两个属性：
+set hive.mapred.supports.subdirectories=true;
+set mapreduce.input.fileinputformat.input.dir.recursive=true;
+
+创建一个不指定分隔符的表
+CREATE  EXTERNAL TABLE IF NOT EXISTS student_external03(
+id INT COMMENT 'student id',
+name  STRING COMMENT 'student name',
+age INT COMMENT 'student age')
+ROW FORMAT DELIMITED
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/hive/data';
+
+30、使用CASE…WHEN…THEN的形式，如下：
+SELECT id,name,city,
+CASE 
+WHEN city='beijing' THEN '特大城市'
+WHEN city='zhengzhou' THEN '一线城市'
+WHEN city='shenzhen' THEN '特大城市'
+ELSE '无效数据'
+END
+FROM student_external01;
+
+31、WHERE 语句
+select * from student_external01 where age=22 AND city='beijing';
+select * from student_external01 where age=22 OR city='zhengzhou';
+
+
+32、GROUP BY和HAVING语句
+SELECT COUNT(*) FROM ctas GROUP BY city;
+SELECT AVG(age) ,city FROM ctas GROUP BY city;
+SELECT AVG(age),city FROM ctas01 GROUP BY city HAVING AVG(age)>22;
+SELECT AVG(age),count(id) FROM ctas01 GROUP BY name HAVING AVG(age)>22;
+
+
+33、ORDER BY和SORT BY语句
+SELECT * FROM student_external01 ORDER BY id DESC;
+SELECT * FROM student_external01 SORT BY id DESC ;
+但是我们可以设置reduce任务的个数
+set mapreduce.job.reduces=2;(默认这两个属性的值为-1)
+SELECT * FROM ctas01 ORDER BY id DESC;
+SELECT * FROM ctas01 SORT BY id DESC ;
+
+34、DISTRIBUTE BY语句
+SELECT id,age FROM ctas DISTRIBUTE BY age SORT BY age,id;
+set mapreduce.job.reduces=1;
+SELECT id,age FROM ctas DISTRIBUTE BY age SORT BY age,id;
+
+35、CLUSTER BY语句
+SELECT id,age FROM student_external01 CLUSTER BY age;
+
+36、hive实现Wordcount
+（1）创建表
+CREATE TABLE wordcount(line STRING)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\n'
+STORED AS TEXTFILE;
+（2）往表中加载数据
+LOAD DATA LOCAL INPATH '/home/hadoop/app/wordcount.txt' INTO TABLE wordcount;
+（3）通过HQL语句进行分析
+1)首先要把单词进行分割
+select split(line, "\t") as key from wordcount;
+2）把分割结果转成一列
+select explode(split(line, "\t")) as key from wordcount;
+3)统计
+select key, count(*) from 
+(select explode(split(line, "\t")) as key from wordcount) wc group by key;
+
+方法二：使用CTAS语法：
+create table wc as select explode(split(line, "\t")) as key from wordcount;
+select key, count(*) from wc group by key;
+
+作业：
+ create table if not exists stock (tradedate STRING,tradetime STRING,stockid STRING,buyprice DOUBLE,buysize INT,sellprice DOUBLE,sellsize INT) row format delimited fields terminated by ','  STORED AS TEXTFILE;
+ 
+LOAD DATA LOCAL INPATH '/home/hadoop/app/stock.csv' INTO TABLE stock;
+
+create table if not exists stock_partition (tradetime STRING,stockid STRING,buyprice DOUBLE,buysize INT,sellprice DOUBLE,sellsize INT) partitioned by (tradedate STRING) row format delimited fields terminated by ',';
+
+set hive.exec.dynamic.partition.mode=nonstrict;
+
+insert overwrite table stock_partition partition(tradedate) select tradetime,stockid,buyprice,buysize,sellprice,sellsize, tradedate from stock distribute by tradedate;
+
+
+注意：自定义UDF时要导入jar包，hive-->lib--->hive-exec-1.0.0.jar
+add jar /home/hadoop/app/hive1.2.2/Min.jar;
+add jar /home/hadoop/app/hive1.2.2/Max.jar;
+
+create temporary function maxprice  as 'com.dajiangtai.hadoop.hive.Max'; 
+create temporary function minprice  as 'com.dajiangtai.hadoop.hive.Min'; 
+
+统计204001股票，每日的最高价格和最低价格。
+ 方法一：select collect_set(stockid),tradedate, max(maxprice(buyprice,sellprice)),min(minprice(buyprice,sellprice))  from stock_partition where stockid='204001' group by tradedate;
+ 
+ 方法二： select stockid,tradedate, max(maxprice(buyprice,sellprice)),min(minprice(buyprice,sellprice))  from stock_partition where stockid='204001' group by tradedate,stockid;
+ 
+ 求所有股票每天的最大最小价格
+ select stockid,tradedate, max(maxprice(buyprice,sellprice)),min(minprice(buyprice,sellprice))  from stock_partition  group by tradedate,stockid;
+ 
+错误做法： 
+select stockid,tradedate, max(buyprice,sellprice),min(buyprice,sellprice) from stock_partition where stockid='204001' group by tradedate,stockid;     //max,min函数传的是表达式，不是参数。
+
+统计204001这只股票，每天每分钟的均价：
+ select stockid,tradedate,substring(tradetime,0,4), sum(buyprice+sellprice)/(count(*)*2)  from stock_partition  where stockid='204001' group by stockid, tradedate,substring(tradetime,0,4); 
+
+
+
+
